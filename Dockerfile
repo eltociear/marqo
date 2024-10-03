@@ -6,8 +6,8 @@ COPY vespa .
 RUN mvn clean package
 
 # Stage 2: Base image for Python setup
-FROM marqo_base_docker_0:latest as base_image
-# FROM 424082663841.dkr.ecr.us-east-1.amazonaws.com/marqo-base:test-python-3.9-v0 as base_image
+# FROM marqo_base_docker_0:latest as base_image
+FROM 424082663841.dkr.ecr.us-east-1.amazonaws.com/marqo-base:test-python-3.9-v0 as base_image
 # FROM marqoai/marqo-base:33 as base_image
 
 # Allow mounting volume containing data and configs for vespa
