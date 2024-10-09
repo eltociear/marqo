@@ -1,5 +1,7 @@
 import unittest
 import torch
+import json
+import numpy as np
 from unittest.mock import MagicMock, patch
 from marqo.s2_inference.types import FloatTensor
 from marqo.s2_inference.s2_inference import clear_loaded_models, get_model_properties_from_registry
@@ -26,6 +28,14 @@ class TestEncoding(unittest.TestCase):
         clear_loaded_models()
 
     def test_vectorize(self):
+        """
+        Ensure that vectorised output from vectorise function matches both the model.encode output and
+        hardcoded embeddings from Python 3.8
+        """
+
+        # Create embeddings dict
+        # embeddings_python_3_8 = dict()
+
         names = ["fp16/ViT-B/32", "onnx16/open_clip/ViT-B-32/laion400m_e32", 'onnx32/open_clip/ViT-B-32-quickgelu/laion400m_e32',
                  "all-MiniLM-L6-v1", "all_datasets_v4_MiniLM-L6", "hf/all-MiniLM-L6-v1", "hf/all_datasets_v4_MiniLM-L6",
                  "hf/bge-small-en-v1.5", "onnx/all-MiniLM-L6-v1", "onnx/all_datasets_v4_MiniLM-L6"]
@@ -43,20 +53,34 @@ class TestEncoding(unittest.TestCase):
         device = 'cpu'
         eps = 1e-9
 
+        # Load in hardcoded embeddings json file
+        with open(f"embeddings_reference/embeddings_python_3_8.json", "r") as f:
+            embeddings_python_3_8 = json.load(f)
+
         for name in names:
-            model_properties = get_model_properties_from_registry(name)
-            model = _load_model(model_properties['name'], model_properties=model_properties, device=device)
+            with self.subTest(name=name):
+                # Add hardcoded embeddings into the variable.
+                model_properties = get_model_properties_from_registry(name)
+                model = _load_model(model_properties['name'], model_properties=model_properties, device=device)
 
-            for sentence in sentences:
-                output_v = vectorise(name, sentence, model_properties, device, normalize_embeddings=True)
+                for sentence in sentences:
+                    with self.subTest(sentence=sentence):
+                        output_v = vectorise(name, sentence, model_properties, device, normalize_embeddings=True)
+                        assert _check_output_type(output_v)
 
-                assert _check_output_type(output_v)
+                        output_m = model.encode(sentence, normalize=True)
 
-                output_m = model.encode(sentence, normalize=True)
+                        # Embeddings must match hardcoded python 3.8 embeddings
+                        if isinstance(sentence, str):
+                            self.assertEqual(np.allclose(output_m, embeddings_python_3_8[name][sentence], atol=1e-9),
+                                             True)
 
-                assert abs(torch.FloatTensor(output_m) - torch.FloatTensor(output_v)).sum() < eps
 
-            clear_loaded_models()
+                        self.assertEqual(np.allclose(output_m, output_v, atol=1e-9), True)
+                        assert abs(torch.FloatTensor(output_m) - torch.FloatTensor(output_v)).sum() < eps
+
+                clear_loaded_models()
+
 
     def test_cpu_encode_type(self):
         names = ["fp16/ViT-B/32", "onnx16/open_clip/ViT-B-32/laion400m_e32", 'onnx32/open_clip/ViT-B-32-quickgelu/laion400m_e32',
@@ -84,6 +108,7 @@ class TestEncoding(unittest.TestCase):
                 assert isinstance(output_v, np.ndarray)
 
             clear_loaded_models()
+
 
     def test_load_clip_text_model(self):
         names = ["fp16/ViT-B/32", "onnx16/open_clip/ViT-B-32/laion400m_e32", 'onnx32/open_clip/ViT-B-32-quickgelu/laion400m_e32',
@@ -313,9 +338,42 @@ class TestOpenClipModelEncoding(unittest.TestCase):
 
                 output_m = model.encode(sentence, normalize=True)
 
+                # TODO: check for raw vector similarity here (from json)
                 assert abs(torch.FloatTensor(output_m) - torch.FloatTensor(output_v)).sum() < eps
 
             clear_loaded_models()
+
+        def test_open_clip_vectorize_record_embeddings(self):
+            names = self.open_clip_test_model
+
+            sentences = ['hello', 'this is a test sentence. so is this.',
+                         ['hello', 'this is a test sentence. so is this.']]
+            device = 'cpu'
+            eps = 1e-9
+
+            embeddings = dict()
+            for name in names:
+                embeddings[name] = dict()
+                model_properties = get_model_properties_from_registry(name)
+                model = _load_model(model_properties['name'], model_properties=model_properties, device=device)
+
+                for sentence in sentences:
+                    output_v = vectorise(name, sentence, model_properties, device, normalize_embeddings=True)
+
+                    assert _check_output_type(output_v)
+
+                    output_m = model.encode(sentence, normalize=True)
+
+                    if isinstance(sentence, str):
+                        embeddings[name][sentence] = output_v
+
+                    # TODO: code in raw vectors here (separate file)
+                    assert abs(torch.FloatTensor(output_m) - torch.FloatTensor(output_v)).sum() < eps
+
+                clear_loaded_models()
+
+            with open(f"embeddings_reference/embeddings_open_clip_python_3_8.json", "w") as f:
+                json.dump(embeddings, f)
 
     def test_load_clip_text_model(self):
         names = self.open_clip_test_model
